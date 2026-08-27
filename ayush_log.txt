@@ -1,14 +1,81 @@
-PS C:\Users\Cyntexa\Desktop\shared_server_localhost\server_pract\Server_pract> python server.py --port 8765 --advertise-host 10.193.100.239
-[MeshOS] Loaded 1 persistent peers from known_peers.json
+PS C:\Users\Cyntexa\Desktop\shared_server_localhost\server_pract\Server_pract> python server.py --port 8770
 ============================================================
-  MeshOS Node ID     : 33f12573d107
-  WebSocket          : ws://10.193.100.239:8765
-  REST API           : http://10.193.100.239:8766
+  MeshOS Node ID     : 327cd6f5eb17
+  WebSocket          : ws://10.193.100.239:8770
+  REST API           : http://10.193.100.239:8771
   Discovery (UDP)    : port 3848
-  Detected IPs       : 10.193.100.239, 172.25.144.1, 172.24.80.1
+  Detected IPs       : 10.193.100.239, 172.24.80.1, 172.25.144.1
 ============================================================
 [MeshOS] Running... (auto-discovery & persistent auto-reconnect active)
-[MeshOS] Dialing ws://10.193.100.101:8765 ...
-[MeshOS] Dial failed ws://10.193.100.101:8765 (attempt 1, retry in 10s): timed out during opening handshake
-[MeshOS] Dialing ws://10.193.100.101:8765 ...
-[MeshOS] Dial failed ws://10.193.100.101:8765 (attempt 2, retry in 20s): timed out during opening handshake
+[14:40:49] [MeshOS] Listening for UDP beacons on port 3848...
+[MeshOS] Saved new persistent peer: ws://10.193.100.101:8770
+[14:40:51] [MeshOS] 🔔 Discovered new UDP beacon from node '99d97843f3de' (ws://10.193.100.101:8770) from IP 10.193.100.101
+[14:40:51] [MeshOS] Auto-initiating connection to discovered peer ws://10.193.100.101:8770
+[14:40:51] [MeshOS] 📡 Dialing ws://10.193.100.101:8770 ...
+[14:40:56] [MeshOS] ⚠️ Dial failed ws://10.193.100.101:8770 (attempt 1, retry in 10s): timed out during opening handshake
+[14:40:57] [MeshOS] Auto-initiating connection to discovered peer ws://10.193.100.101:8770
+[14:41:00] [MeshOS] Auto-initiating connection to discovered peer ws://10.193.100.101:8770
+[14:41:03] [MeshOS] Auto-initiating connection to discovered peer ws://10.193.100.101:8770
+[14:41:03] [MeshOS] 📡 Dialing ws://10.193.100.101:8770 ...
+[14:41:08] [MeshOS] ⚠️ Dial failed ws://10.193.100.101:8770 (attempt 2, retry in 20s): timed out during opening handshake
+[14:41:12] [MeshOS] Auto-initiating connection to discovered peer ws://10.193.100.101:8770
+[14:41:15] [MeshOS] Auto-initiating connection to discovered peer ws://10.193.100.101:8770
+[14:41:18] [MeshOS] Auto-initiating connection to discovered peer ws://10.193.100.101:8770
+[14:41:21] [MeshOS] Auto-initiating connection to discovered peer ws://10.193.100.101:8770
+[14:41:27] [MeshOS] Auto-initiating connection to discovered peer ws://10.193.100.101:8770
+[14:41:27] [MeshOS] 📡 Dialing ws://10.193.100.101:8770 ...
+[14:41:32] [MeshOS] ⚠️ Dial failed ws://10.193.100.101:8770 (attempt 3, retry in 40s): timed out during opening handshake
+[14:41:33] [MeshOS] Auto-initiating connection to discovered peer ws://10.193.100.101:8770
+[14:41:36] [MeshOS] Auto-initiating connection to discovered peer ws://10.193.100.101:8770
+[14:41:39] [MeshOS] Auto-initiating connection to discovered peer ws://10.193.100.101:8770
+[14:41:42] [MeshOS] Auto-initiating connection to discovered peer ws://10.193.100.101:8770
+
+[MeshOS] Shutting down
+PS C:\Users\Cyntexa\Desktop\shared_server_localhost\server_pract\Server_pract> git pull
+remote: Enumerating objects: 16, done.
+remote: Counting objects: 100% (16/16), done.
+remote: Compressing objects: 100% (5/5), done.
+remote: Total 13 (delta 8), reused 13 (delta 8), pack-reused 0 (from 0)
+Unpacking objects: 100% (13/13), 3.52 KiB | 1024 bytes/s, done.
+From https://github.com/MSaini-Dev/Server_pract
+   fe8dcf8..e9524f6  main       -> origin/main
+Updating fe8dcf8..e9524f6
+Fast-forward
+ mesh/__init__.py |  21 ++
+ mesh/api.py      |  74 +++++++
+ mesh/config.py   |  58 +++++
+ mesh/logger.py   |  30 +++
+ mesh/network.py  | 310 +++++++++++++++++++++++++++
+ mesh/node.py     | 134 ++++++++++++
+ mohit_log.txt    |  42 +---
+ server.py        | 630 +++----------------------------------------------------
+ 8 files changed, 660 insertions(+), 639 deletions(-)
+ create mode 100644 mesh/__init__.py
+ create mode 100644 mesh/api.py
+ create mode 100644 mesh/config.py
+ create mode 100644 mesh/logger.py
+ create mode 100644 mesh/network.py
+ create mode 100644 mesh/node.py
+PS C:\Users\Cyntexa\Desktop\shared_server_localhost\server_pract\Server_pract> python server.py --port 8770
+[14:48:01] [MeshOS] Loaded 1 persistent peers from known_peers.json
+============================================================
+  MeshOS Node ID     : 327cd6f5eb17
+  WebSocket          : ws://10.193.100.239:8770
+  REST API           : http://10.193.100.239:8771
+  Discovery (UDP)    : port 3848
+  Detected IPs       : 10.193.100.239, 172.24.80.1, 172.25.144.1
+  Log File           : meshos.log
+============================================================
+[14:48:01] [MeshOS] Running... (auto-discovery & persistent auto-reconnect active)
+[14:48:01] [MeshOS] Listening for UDP beacons on port 3848...
+[14:48:01] [MeshOS] 📡 Dialing ws://10.193.100.101:8770 ...
+[14:48:04] [MeshOS] 🔔 Discovered new UDP beacon from node '99d97843f3de' (ws://10.193.100.101:8770) from IP 10.193.100.101
+[14:48:06] [MeshOS] ⚠️ Dial failed ws://10.193.100.101:8770 (attempt 1, retry in 10s): timed out during opening handshake
+[14:48:07] [MeshOS] Auto-initiating connection to discovered peer ws://10.193.100.101:8770
+[14:48:10] [MeshOS] Auto-initiating connection to discovered peer ws://10.193.100.101:8770
+[14:48:13] [MeshOS] Auto-initiating connection to discovered peer ws://10.193.100.101:8770
+[14:48:13] [MeshOS] 📡 Dialing ws://10.193.100.101:8770 ...
+[14:48:18] [MeshOS] ⚠️ Dial failed ws://10.193.100.101:8770 (attempt 2, retry in 20s): timed out during opening handshake
+[14:48:19] [MeshOS] Auto-initiating connection to discovered peer ws://10.193.100.101:8770
+[14:48:25] [MeshOS] Auto-initiating connection to discovered peer ws://10.193.100.101:8770
+[14:48:28] [MeshOS] Auto-initiating connection to discovered peer ws://10.193.100.101:8770
