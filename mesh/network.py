@@ -257,21 +257,33 @@ class NetworkManager:
     async def udp_listen_loop(self):
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        sock.bind(("", UDP_PORT))
-        sock.setblocking(False)
+        try:
+            sock.bind(("", UDP_PORT))
+        except Exception as e:
+            log(f"❌ Failed to bind UDP listener port {UDP_PORT}: {e}")
+            return
 
+        sock.setblocking(False)
         loop = asyncio.get_running_loop()
         log(f"Listening for UDP beacons on port {UDP_PORT}...")
 
         while True:
             try:
                 data, addr = await loop.sock_recvfrom(sock, 2048)
-                msg = json.loads(data.decode())
+                try:
+                    msg = json.loads(data.decode())
+                except Exception as e:
+                    log(f"Received invalid UDP packet from {addr[0]}: {e}")
+                    continue
+
                 if msg.get("type") != "BEACON":
                     continue
 
-                peer_id = msg["id"]
-                peer_addr = msg["addr"]
+                peer_id = msg.get("id")
+                peer_addr = msg.get("addr")
+
+                if not peer_id or not peer_addr:
+                    continue
 
                 if peer_id == self.node.id:
                     continue
@@ -287,8 +299,11 @@ class NetworkManager:
                     log(f"Auto-initiating connection to discovered peer {peer_addr}")
                     asyncio.create_task(self.dial(peer_addr))
 
-            except Exception:
-                await asyncio.sleep(0.05)
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                log(f"UDP listener loop error: {e}")
+                await asyncio.sleep(0.5)
 
     async def peer_watchdog(self):
         while True:
