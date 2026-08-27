@@ -1,5 +1,6 @@
 known_peers.json
-
 .mesh_node_id
-
-
+*.log
+*_log.txt
+__pycache__/
+.DS_Store
