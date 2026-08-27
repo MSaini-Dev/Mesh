@@ -1,598 +1,30 @@
 #!/usr/bin/env python3
 """
-MeshOS - Offline Mesh with Auto-Discovery
-=========================================
-- Automatic peer discovery (UDP broadcast) → works on Wi-Fi + Bluetooth PAN
-- WebSocket mesh with full graph gossip
-- Multi-hop message routing (BFS)
-- REST API for status / send / inbox
-- Live status over WebSocket
-
-Install:
-    pip install websockets aiohttp --break-system-packages
-
-Run on every machine:
-    python3 mesh_server.py --port 8765
+MeshOS - Offline Mesh Node Entry Point
+======================================
+Usage:
+    python server.py --port 8765
+    python server.py --port 8770
 """
 
 import argparse
 import asyncio
-import json
-import os
-import socket
-import struct
-import time
-import uuid
-from collections import deque
-
+import sys
 import websockets
 from aiohttp import web
 
-ID_FILE = ".mesh_node_id"
-PEERS_FILE = "known_peers.json"
-UDP_PORT = 3848          # discovery port
-BEACON_INTERVAL = 3.0    # seconds
-PEER_TIMEOUT = 15.0      # seconds without beacon → consider offline
-AUTO_RECONNECT_INTERVAL = 8.0  # auto-reconnect check cycle (seconds)
+from mesh import (
+    MeshNode,
+    UDP_PORT,
+    get_local_ips,
+    get_or_create_node_id,
+    log,
+    make_app,
+    setup_logger,
+    start_network_services,
+)
+from mesh.network import NetworkManager
 
-
-def get_or_create_node_id():
-    if os.path.exists(ID_FILE):
-        with open(ID_FILE) as f:
-            return f.read().strip()
-    nid = uuid.uuid4().hex[:12]
-    with open(ID_FILE, "w") as f:
-        f.write(nid)
-    return nid
-
-
-def get_local_ips():
-    """Return non-loopback IPv4 addresses (Wi-Fi, LAN, Bluetooth PAN, etc.), prioritizing real LAN IPs over APIPA."""
-    raw_ips = []
-    
-    # Probe primary outbound interface IP
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80))
-        ip = s.getsockname()[0]
-        if ip and not ip.startswith("127."):
-            raw_ips.append(ip)
-        s.close()
-    except Exception:
-        pass
-
-    # Resolve local hostname interfaces
-    try:
-        host_name = socket.gethostname()
-        for info in socket.getaddrinfo(host_name, None, socket.AF_INET):
-            ip = info[4][0]
-            if ip and not ip.startswith("127.") and ip not in raw_ips:
-                raw_ips.append(ip)
-    except Exception:
-        pass
-
-    def ip_priority(ip: str) -> int:
-        if ip.startswith("192.168.") or ip.startswith("10."):
-            return 1  # Physical Wi-Fi / LAN / Mobile Hotspot (Highest Priority)
-        if ip.startswith("172."):
-            return 2  # Often WSL / Hyper-V / Docker virtual adapter on Windows
-        if ip.startswith("169.254."):
-            return 3  # APIPA / Link-Local (Lowest)
-        return 2
-
-    sorted_ips = sorted(set(raw_ips), key=ip_priority)
-    return sorted_ips or ["127.0.0.1"]
-
-
-class MeshNode:
-    def __init__(self, node_id: str, listen_host: str, listen_port: int, advertise_host: str | None):
-        self.id = node_id
-        self.listen_host = listen_host
-        self.listen_port = listen_port
-
-        # Prefer real LAN/Bluetooth IP for advertising
-        if advertise_host:
-            self.advertise_ip = advertise_host
-        else:
-            candidates = get_local_ips()
-            self.advertise_ip = candidates[0]
-
-        self.self_addr = f"ws://{self.advertise_ip}:{listen_port}"
-
-        # Direct connections
-        self.connections: dict[str, websockets.WebSocketServerProtocol] = {}
-        self.peer_addrs: dict[str, str] = {}
-
-        # Full mesh graph
-        self.graph: dict[str, dict] = {
-            self.id: {
-                "addr": self.self_addr,
-                "neighbors": [],
-                "last_seen": time.time(),
-                "name": socket.gethostname(),
-            }
-        }
-        self.graph_version = 0
-
-        # Discovery & Persistent Store
-        self.known_beacons: dict[str, float] = {}  # peer_id -> last_beacon_ts
-        self.dialing: set[str] = set()
-        self.persistent_peers: set[str] = set()
-        self.fail_counts: dict[str, int] = {}
-        self.cooldowns: dict[str, float] = {}
-
-        self.inbox: list[dict] = []
-        self._lock = asyncio.Lock()
-        
-        self.load_persistent_peers()
-
-    def load_persistent_peers(self):
-        """Loads stored peer URLs from known_peers.json."""
-        if os.path.exists(PEERS_FILE):
-            try:
-                with open(PEERS_FILE, "r") as f:
-                    data = json.load(f)
-                    if isinstance(data, list):
-                        for url in data:
-                            if url and url != self.self_addr:
-                                self.persistent_peers.add(url)
-                print(f"[MeshOS] Loaded {len(self.persistent_peers)} persistent peers from {PEERS_FILE}")
-            except Exception as e:
-                print(f"[MeshOS] Failed loading {PEERS_FILE}: {e}")
-
-    def save_persistent_peers_to_disk(self):
-        """Writes persistent peer list to JSON file."""
-        try:
-            with open(PEERS_FILE, "w") as f:
-                json.dump(sorted(list(self.persistent_peers)), f, indent=2)
-        except Exception as e:
-            print(f"[MeshOS] Failed writing {PEERS_FILE}: {e}")
-
-    def save_persistent_peer(self, url: str):
-        """Saves a newly discovered/dialed peer URL to known_peers.json."""
-        if not url or url == self.self_addr or url in self.persistent_peers:
-            return
-        self.persistent_peers.add(url)
-        self.save_persistent_peers_to_disk()
-        print(f"[MeshOS] Saved new persistent peer: {url}")
-
-    async def refresh_connections(self):
-        """Triggers a complete mesh reconnect pass across all known & persistent peer endpoints."""
-        self._touch_self()
-        urls_to_check = set(self.persistent_peers)
-
-        # Include all peer addresses learned through the full graph gossip
-        for nid, info in self.graph.items():
-            if nid != self.id and info.get("addr") and info["addr"] != self.self_addr:
-                urls_to_check.add(info["addr"])
-
-        connected_addrs = set(self.peer_addrs.values())
-        now = time.time()
-        triggered = []
-
-        for url in urls_to_check:
-            if url != self.self_addr and url not in connected_addrs and url not in self.dialing:
-                # Respect backoff cooldown before retrying failed endpoints
-                if now >= self.cooldowns.get(url, 0):
-                    triggered.append(url)
-                    asyncio.create_task(self.dial(url))
-
-        return {
-            "status": "refreshing",
-            "active_connections": len(self.connections),
-            "persistent_peers": list(self.persistent_peers),
-            "triggered_dials": triggered,
-        }
-
-    async def auto_reconnect_loop(self):
-        """Background task that periodically checks and re-establishes broken or missing peer links."""
-        while True:
-            await asyncio.sleep(AUTO_RECONNECT_INTERVAL)
-            try:
-                # Re-dial any missing persistent or graph peers
-                await self.refresh_connections()
-            except Exception as e:
-                print(f"[MeshOS] Auto-reconnect check error: {e}")
-
-    # ───────────────────────── Graph helpers ─────────────────────────
-
-    def _touch_self(self):
-        self.graph[self.id]["neighbors"] = list(self.connections.keys())
-        self.graph[self.id]["last_seen"] = time.time()
-        self.graph[self.id]["addr"] = self.self_addr
-
-    def merge_graph(self, other_graph: dict) -> bool:
-        changed = False
-        for nid, info in other_graph.items():
-            if nid == self.id:
-                continue
-            mine = self.graph.get(nid)
-            if mine is None or info.get("last_seen", 0) > mine.get("last_seen", 0):
-                self.graph[nid] = info
-                changed = True
-        if changed:
-            self.graph_version += 1
-        return changed
-
-    def bfs_next_hop(self, dest_id: str):
-        if dest_id == self.id:
-            return "SELF"
-        if dest_id not in self.graph:
-            return None
-
-        visited = {self.id}
-        q = deque([(self.id, None)])  # (node, first_hop)
-
-        while q:
-            node, first_hop = q.popleft()
-            for nb in self.graph.get(node, {}).get("neighbors", []):
-                if nb in visited:
-                    continue
-                visited.add(nb)
-                hop = first_hop if first_hop is not None else nb
-                if nb == dest_id:
-                    return hop
-                q.append((nb, hop))
-        return None
-
-    def snapshot(self):
-        self._touch_self()
-        return {
-            "self_id": self.id,
-            "self_addr": self.self_addr,
-            "advertise_ip": self.advertise_ip,
-            "graph_version": self.graph_version,
-            "direct_peers": list(self.connections.keys()),
-            "online_peers": list(self.known_beacons.keys()),
-            "graph": self.graph,
-        }
-
-    def log(self, msg: str):
-        t = time.strftime("%H:%M:%S")
-        print(f"[{t}] [MeshOS] {msg}")
-
-    # ───────────────────────── Gossip ─────────────────────────
-
-    async def broadcast_graph(self, exclude: str | None = None):
-        self._touch_self()
-        payload = json.dumps({
-            "type": "MESH_SYNC",
-            "graph": self.graph,
-            "graph_version": self.graph_version,
-            "from": self.id,
-        })
-        dead = []
-        for pid, ws in list(self.connections.items()):
-            if pid == exclude:
-                continue
-            try:
-                await ws.send(payload)
-            except Exception:
-                dead.append(pid)
-        for pid in dead:
-            await self.unregister_peer(pid)
-
-    async def handle_incoming_message(self, envelope: dict):
-        dest = envelope["dest"]
-        if dest == self.id:
-            entry = {
-                "from": envelope["src"],
-                "msg": envelope["msg"],
-                "ts": time.time(),
-                "path": envelope.get("path", []),
-            }
-            self.inbox.append(entry)
-            self.log(f"✉ Message from {envelope['src']}: {envelope['msg']}")
-            return
-
-        next_hop = self.bfs_next_hop(dest)
-        if next_hop and next_hop in self.connections:
-            envelope["path"] = envelope.get("path", []) + [self.id]
-            try:
-                await self.connections[next_hop].send(json.dumps(envelope))
-                self.log(f"↳ Forwarded message to {dest} via {next_hop}")
-            except Exception as e:
-                self.log(f"Forward failed → {next_hop}: {e}")
-        else:
-            self.log(f"No route to {dest}")
-
-    # ───────────────────────── Connection lifecycle ─────────────────────────
-
-    async def register_peer(self, peer_id: str, ws, addr: str):
-        async with self._lock:
-            # Deterministic tie-breaking if both nodes dial each other concurrently
-            if peer_id in self.connections:
-                existing_ws = self.connections[peer_id]
-                if existing_ws is not ws:
-                    # Keep the connection initiated by the higher node_id to break tie cleanly
-                    if self.id > peer_id:
-                        try:
-                            await ws.close()
-                        except Exception:
-                            pass
-                        return
-                    else:
-                        self.connections[peer_id] = ws
-                        self.peer_addrs[peer_id] = addr
-                        try:
-                            await existing_ws.close()
-                        except Exception:
-                            pass
-            else:
-                self.connections[peer_id] = ws
-                self.peer_addrs[peer_id] = addr
-
-            self._touch_self()
-            self.known_beacons[peer_id] = time.time()
-            if addr and addr != "unknown":
-                self.save_persistent_peer(addr)
-
-        self.log(f"✓ Connected & Registered peer: {peer_id} ({addr})")
-        await self.broadcast_graph()
-
-    async def unregister_peer(self, peer_id: str, ws=None):
-        async with self._lock:
-            if ws is not None and self.connections.get(peer_id) is not ws:
-                return
-            self.connections.pop(peer_id, None)
-            self.peer_addrs.pop(peer_id, None)
-            self._touch_self()
-        self.log(f"✗ Peer {peer_id} disconnected")
-        await self.broadcast_graph()
-
-    async def ws_handler(self, ws):
-        """Handles both inbound and outbound WebSocket sessions."""
-        peer_id = None
-        try:
-            # HELLO handshake
-            await ws.send(json.dumps({
-                "type": "HELLO",
-                "id": self.id,
-                "addr": self.self_addr,
-                "name": socket.gethostname(),
-            }))
-            raw = await asyncio.wait_for(ws.recv(), timeout=8)
-            hello = json.loads(raw)
-            if hello.get("type") != "HELLO":
-                self.log(f"Handshake failed: unexpected message type {hello.get('type')}")
-                await ws.close()
-                return
-
-            peer_id = hello["id"]
-            peer_addr = hello.get("addr", "unknown")
-
-            if peer_id == self.id:
-                self.log(f"Handshake ignored: self-connection attempt from same node_id ({peer_id})")
-                await ws.close()
-                return
-
-            await self.register_peer(peer_id, ws, peer_addr)
-
-            async for raw in ws:
-                data = json.loads(raw)
-                mtype = data.get("type")
-
-                if mtype == "MESH_SYNC":
-                    changed = self.merge_graph(data.get("graph", {}))
-                    if changed:
-                        await self.broadcast_graph(exclude=peer_id)
-
-                elif mtype == "MSG":
-                    await self.handle_incoming_message(data)
-
-                elif mtype == "STATUS":
-                    pass
-
-        except Exception as e:
-            if peer_id:
-                self.log(f"Session with {peer_id} ended: {e}")
-            else:
-                self.log(f"Handshake failed: {e}")
-        finally:
-            if peer_id:
-                await self.unregister_peer(peer_id, ws)
-
-    async def dial(self, url: str):
-        if not url or url in self.dialing or url == self.self_addr:
-            return
-
-        now = time.time()
-        cooldown_until = self.cooldowns.get(url, 0)
-        if now < cooldown_until:
-            return
-
-        self.dialing.add(url)
-        try:
-            self.log(f"📡 Dialing {url} ...")
-            ws = await websockets.connect(url, open_timeout=5, ping_interval=20)
-            self.fail_counts.pop(url, None)
-            self.cooldowns.pop(url, None)
-            await self.ws_handler(ws)
-        except Exception as e:
-            cnt = self.fail_counts.get(url, 0) + 1
-            self.fail_counts[url] = cnt
-            backoff = min(300, 10 * (2 ** min(cnt - 1, 5)))
-            self.cooldowns[url] = now + backoff
-
-            self.log(f"⚠️ Dial failed {url} (attempt {cnt}, retry in {backoff}s): {e}")
-
-            if cnt >= 8 and url in self.persistent_peers:
-                self.log(f"Evicting unresponsive peer from persistent store: {url}")
-                self.persistent_peers.discard(url)
-                self.save_persistent_peers_to_disk()
-        finally:
-            self.dialing.discard(url)
-
-    # ───────────────────────── UDP Auto-Discovery ─────────────────────────
-
-    async def udp_beacon_loop(self):
-        """Broadcast our presence every few seconds."""
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-
-        payload = json.dumps({
-            "type": "BEACON",
-            "id": self.id,
-            "addr": self.self_addr,
-            "port": self.listen_port,
-            "name": socket.gethostname(),
-            "ts": time.time(),
-        }).encode()
-
-        while True:
-            try:
-                targets = [
-                    ("255.255.255.255", UDP_PORT),
-                    ("192.168.0.255", UDP_PORT),
-                    ("192.168.1.255", UDP_PORT),
-                    ("192.168.43.255", UDP_PORT),
-                    ("192.168.44.255", UDP_PORT),
-                    ("10.0.0.255", UDP_PORT),
-                ]
-                for ip in get_local_ips():
-                    parts = ip.split(".")
-                    if len(parts) == 4:
-                        targets.append((f"{parts[0]}.{parts[1]}.{parts[2]}.255", UDP_PORT))
-
-                for target in set(targets):
-                    try:
-                        sock.sendto(payload, target)
-                    except Exception:
-                        pass
-            except Exception as e:
-                self.log(f"UDP Beacon error: {e}")
-
-            await asyncio.sleep(BEACON_INTERVAL)
-
-    async def udp_listen_loop(self):
-        """Listen for beacons and auto-dial new peers."""
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        sock.bind(("", UDP_PORT))
-        sock.setblocking(False)
-
-        loop = asyncio.get_running_loop()
-        self.log(f"Listening for UDP beacons on port {UDP_PORT}...")
-
-        while True:
-            try:
-                data, addr = await loop.sock_recvfrom(sock, 2048)
-                msg = json.loads(data.decode())
-                if msg.get("type") != "BEACON":
-                    continue
-
-                peer_id = msg["id"]
-                peer_addr = msg["addr"]
-
-                if peer_id == self.id:
-                    continue
-
-                is_new = peer_id not in self.known_beacons
-                self.known_beacons[peer_id] = time.time()
-                self.save_persistent_peer(peer_addr)
-
-                if is_new:
-                    self.log(f"🔔 Discovered new UDP beacon from node '{peer_id}' ({peer_addr}) from IP {addr[0]}")
-
-                # Auto-connect if we don't already have a live connection
-                if peer_id not in self.connections and peer_addr not in self.dialing:
-                    self.log(f"Auto-initiating connection to discovered peer {peer_addr}")
-                    asyncio.create_task(self.dial(peer_addr))
-
-            except Exception:
-                await asyncio.sleep(0.05)
-
-    async def peer_watchdog(self):
-        """Mark peers offline if beacons stop arriving."""
-        while True:
-            now = time.time()
-            offline = [pid for pid, ts in self.known_beacons.items() if now - ts > PEER_TIMEOUT]
-            for pid in offline:
-                self.known_beacons.pop(pid, None)
-                if pid in self.connections:
-                    self.log(f"⏰ Peer {pid} beacon timed out (offline)")
-                    await self.unregister_peer(pid)
-            await asyncio.sleep(5)
-
-
-
-# ───────────────────────── REST API ─────────────────────────
-
-def make_app(node: MeshNode):
-    app = web.Application()
-
-    async def connection_info(request):
-        return web.json_response(node.snapshot())
-
-    async def peers(request):
-        return web.json_response({
-            "direct": node.peer_addrs,
-            "known_beacons": list(node.known_beacons.keys()),
-            "persistent_peers": list(node.persistent_peers),
-        })
-
-    async def inbox(request):
-        return web.json_response(node.inbox[-50:])  # last 50
-
-    async def send_to(request):
-        if request.method == "POST":
-            body = await request.json()
-            dest = body.get("to")
-            msg = body.get("msg")
-        else:
-            dest = request.query.get("to")
-            msg = request.query.get("msg")
-
-        if not dest or msg is None:
-            return web.json_response({"error": "need 'to' and 'msg'"}, status=400)
-
-        if dest == node.id:
-            return web.json_response({"error": "cannot send to self"}, status=400)
-
-        next_hop = node.bfs_next_hop(dest)
-        if not next_hop or next_hop not in node.connections:
-            return web.json_response({
-                "error": f"no route to {dest}",
-                "known_nodes": list(node.graph.keys()),
-            }, status=404)
-
-        envelope = {
-            "type": "MSG",
-            "dest": dest,
-            "src": node.id,
-            "msg": msg,
-            "path": [node.id],
-        }
-        try:
-            await node.connections[next_hop].send(json.dumps(envelope))
-            return web.json_response({"status": "sent", "via": next_hop})
-        except Exception as e:
-            return web.json_response({"error": str(e)}, status=500)
-
-    async def connect_route(request):
-        body = await request.json()
-        url = body.get("url")
-        if not url:
-            return web.json_response({"error": "need url"}, status=400)
-        node.save_persistent_peer(url)
-        asyncio.create_task(node.dial(url))
-        return web.json_response({"status": "dialing_and_saved", "url": url})
-
-    async def refresh_route(request):
-        result = await node.refresh_connections()
-        return web.json_response(result)
-
-    app.router.add_get("/connection_info", connection_info)
-    app.router.add_get("/peers", peers)
-    app.router.add_get("/inbox", inbox)
-    app.router.add_route("*", "/send_to", send_to)
-    app.router.add_post("/connect", connect_route)
-    app.router.add_route("*", "/refresh", refresh_route)
-    return app
-
-
-# ───────────────────────── Main ─────────────────────────
 
 async def main():
     parser = argparse.ArgumentParser(description="MeshOS - Auto-discovering mesh node")
@@ -602,10 +34,15 @@ async def main():
                         help="IP that other nodes should use to reach you")
     parser.add_argument("--connect", action="append", default=[],
                         help="Optional manual seed: ws://ip:port")
+    parser.add_argument("--log-file", default="meshos.log",
+                        help="Log file name (default: meshos.log)")
     args = parser.parse_args()
+
+    setup_logger(args.log_file)
 
     node_id = get_or_create_node_id()
     node = MeshNode(node_id, args.host, args.port, args.advertise_host)
+    net = NetworkManager(node)
 
     all_ips = get_local_ips()
     print("=" * 60)
@@ -614,40 +51,35 @@ async def main():
     print(f"  REST API           : http://{node.advertise_ip}:{args.port + 1}")
     print(f"  Discovery (UDP)    : port {UDP_PORT}")
     print(f"  Detected IPs       : {', '.join(all_ips)}")
+    print(f"  Log File           : {args.log_file}")
     print("=" * 60)
 
     # WebSocket server
     ws_server = await websockets.serve(
-        node.ws_handler,
+        net.ws_handler,
         args.host,
         args.port,
         ping_interval=20,
         ping_timeout=20,
     )
 
-    # REST API on port+1
-    app = make_app(node)
+    # REST API on port + 1
+    app = make_app(node, net)
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, args.host, args.port + 1)
     await site.start()
 
-    # Start discovery + maintenance tasks
-    asyncio.create_task(node.udp_beacon_loop())
-    asyncio.create_task(node.udp_listen_loop())
-    asyncio.create_task(node.peer_watchdog())
-    asyncio.create_task(node.auto_reconnect_loop())
+    # Start network tasks (UDP broadcast, UDP listener, watchdog, auto-reconnect)
+    start_network_services(node, net)
 
     # Optional manual seeds
     for url in args.connect:
         node.save_persistent_peer(url)
-        asyncio.create_task(node.dial(url))
+        asyncio.create_task(net.dial(url))
 
-    # Trigger immediate reconnect pass for all saved persistent peers
-    asyncio.create_task(node.refresh_connections())
-
-    print("[MeshOS] Running... (auto-discovery & persistent auto-reconnect active)")
-    await asyncio.Future()  # run forever
+    log("Running... (auto-discovery & persistent auto-reconnect active)")
+    await asyncio.Future()  # Run forever
 
 
 if __name__ == "__main__":
