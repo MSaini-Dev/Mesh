@@ -59,6 +59,7 @@ async def main():
         net.ws_handler,
         args.host,
         args.port,
+        process_request=net.process_http_request,
         ping_interval=20,
         ping_timeout=20,
     )
