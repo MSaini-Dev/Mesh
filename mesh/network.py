@@ -14,6 +14,27 @@ class NetworkManager:
     def __init__(self, node: MeshNode):
         self.node = node
 
+    def process_http_request(self, connection, request):
+        """Processes incoming HTTP requests prior to WebSocket handshake."""
+        conn_hdr = request.headers.get("Connection", "").lower()
+        upgrade_hdr = request.headers.get("Upgrade", "").lower()
+
+        # Fix/normalize multi-value Connection header (e.g. "keep-alive, Upgrade")
+        if "upgrade" in conn_hdr:
+            request.headers["Connection"] = "Upgrade"
+            return None
+
+        # If HTTP request is not attempting a WebSocket upgrade (e.g. health checks / curl)
+        if upgrade_hdr != "websocket":
+            try:
+                return connection.respond(
+                    200,
+                    f"MeshOS Node {self.node.id}. REST API available on http://{self.node.advertise_ip}:{self.node.listen_port + 1}\n"
+                )
+            except Exception:
+                pass
+        return None
+
     async def broadcast_graph(self, exclude: str | None = None):
         self.node._touch_self()
         payload = json.dumps({
