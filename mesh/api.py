@@ -66,6 +66,7 @@ def make_app(node: MeshNode, net: NetworkManager):
         return web.json_response(res)
 
     app.router.add_get("/status", connection_info)
+    app.router.add_get("/connection_info", connection_info)
     app.router.add_get("/peers", peers)
     app.router.add_post("/connect", connect_peer)
     app.router.add_post("/send", send_msg)
