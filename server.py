@@ -247,6 +247,10 @@ class MeshNode:
             "graph": self.graph,
         }
 
+    def log(self, msg: str):
+        t = time.strftime("%H:%M:%S")
+        print(f"[{t}] [MeshOS] {msg}")
+
     # ───────────────────────── Gossip ─────────────────────────
 
     async def broadcast_graph(self, exclude: str | None = None):
@@ -278,7 +282,7 @@ class MeshNode:
                 "path": envelope.get("path", []),
             }
             self.inbox.append(entry)
-            print(f"[MeshOS] Message from {envelope['src']}: {envelope['msg']}")
+            self.log(f"✉ Message from {envelope['src']}: {envelope['msg']}")
             return
 
         next_hop = self.bfs_next_hop(dest)
@@ -286,10 +290,11 @@ class MeshNode:
             envelope["path"] = envelope.get("path", []) + [self.id]
             try:
                 await self.connections[next_hop].send(json.dumps(envelope))
+                self.log(f"↳ Forwarded message to {dest} via {next_hop}")
             except Exception as e:
-                print(f"[MeshOS] Forward failed → {next_hop}: {e}")
+                self.log(f"Forward failed → {next_hop}: {e}")
         else:
-            print(f"[MeshOS] No route to {dest}")
+            self.log(f"No route to {dest}")
 
     # ───────────────────────── Connection lifecycle ─────────────────────────
 
@@ -301,14 +306,12 @@ class MeshNode:
                 if existing_ws is not ws:
                     # Keep the connection initiated by the higher node_id to break tie cleanly
                     if self.id > peer_id:
-                        # Reject/close the lower-priority duplicate socket
                         try:
                             await ws.close()
                         except Exception:
                             pass
                         return
                     else:
-                        # Replace old connection with new one
                         self.connections[peer_id] = ws
                         self.peer_addrs[peer_id] = addr
                         try:
@@ -324,18 +327,17 @@ class MeshNode:
             if addr and addr != "unknown":
                 self.save_persistent_peer(addr)
 
-        print(f"[MeshOS] ✓ Connected to {peer_id} ({addr})")
+        self.log(f"✓ Connected & Registered peer: {peer_id} ({addr})")
         await self.broadcast_graph()
 
     async def unregister_peer(self, peer_id: str, ws=None):
         async with self._lock:
-            # ONLY remove from self.connections if the socket being closed is the ACTIVE socket!
             if ws is not None and self.connections.get(peer_id) is not ws:
                 return
             self.connections.pop(peer_id, None)
             self.peer_addrs.pop(peer_id, None)
             self._touch_self()
-        print(f"[MeshOS] ✗ Peer {peer_id} disconnected")
+        self.log(f"✗ Peer {peer_id} disconnected")
         await self.broadcast_graph()
 
     async def ws_handler(self, ws):
@@ -352,6 +354,7 @@ class MeshNode:
             raw = await asyncio.wait_for(ws.recv(), timeout=8)
             hello = json.loads(raw)
             if hello.get("type") != "HELLO":
+                self.log(f"Handshake failed: unexpected message type {hello.get('type')}")
                 await ws.close()
                 return
 
@@ -359,6 +362,7 @@ class MeshNode:
             peer_addr = hello.get("addr", "unknown")
 
             if peer_id == self.id:
+                self.log(f"Handshake ignored: self-connection attempt from same node_id ({peer_id})")
                 await ws.close()
                 return
 
@@ -381,7 +385,9 @@ class MeshNode:
 
         except Exception as e:
             if peer_id:
-                print(f"[MeshOS] Session with {peer_id} ended: {e}")
+                self.log(f"Session with {peer_id} ended: {e}")
+            else:
+                self.log(f"Handshake failed: {e}")
         finally:
             if peer_id:
                 await self.unregister_peer(peer_id, ws)
@@ -397,23 +403,21 @@ class MeshNode:
 
         self.dialing.add(url)
         try:
-            print(f"[MeshOS] Dialing {url} ...")
-            ws = await websockets.connect(url, open_timeout=4, ping_interval=20)
+            self.log(f"📡 Dialing {url} ...")
+            ws = await websockets.connect(url, open_timeout=5, ping_interval=20)
             self.fail_counts.pop(url, None)
             self.cooldowns.pop(url, None)
             await self.ws_handler(ws)
         except Exception as e:
             cnt = self.fail_counts.get(url, 0) + 1
             self.fail_counts[url] = cnt
-            # Exponential backoff: 10s, 20s, 40s, 80s, max 300s
             backoff = min(300, 10 * (2 ** min(cnt - 1, 5)))
             self.cooldowns[url] = now + backoff
 
-            print(f"[MeshOS] Dial failed {url} (attempt {cnt}, retry in {backoff}s): {e}")
+            self.log(f"⚠️ Dial failed {url} (attempt {cnt}, retry in {backoff}s): {e}")
 
-            # Evict dead persistent peer after 8 consecutive failures
             if cnt >= 8 and url in self.persistent_peers:
-                print(f"[MeshOS] Evicting unresponsive peer from persistent store: {url}")
+                self.log(f"Evicting unresponsive peer from persistent store: {url}")
                 self.persistent_peers.discard(url)
                 self.save_persistent_peers_to_disk()
         finally:
@@ -438,13 +442,12 @@ class MeshNode:
 
         while True:
             try:
-                # Broadcast to common subnets + limited broadcast
                 targets = [
                     ("255.255.255.255", UDP_PORT),
                     ("192.168.0.255", UDP_PORT),
                     ("192.168.1.255", UDP_PORT),
-                    ("192.168.43.255", UDP_PORT),   # common Android hotspot
-                    ("192.168.44.255", UDP_PORT),   # common Bluetooth PAN
+                    ("192.168.43.255", UDP_PORT),
+                    ("192.168.44.255", UDP_PORT),
                     ("10.0.0.255", UDP_PORT),
                 ]
                 for ip in get_local_ips():
@@ -458,7 +461,7 @@ class MeshNode:
                     except Exception:
                         pass
             except Exception as e:
-                print(f"[MeshOS] Beacon error: {e}")
+                self.log(f"UDP Beacon error: {e}")
 
             await asyncio.sleep(BEACON_INTERVAL)
 
@@ -470,6 +473,7 @@ class MeshNode:
         sock.setblocking(False)
 
         loop = asyncio.get_running_loop()
+        self.log(f"Listening for UDP beacons on port {UDP_PORT}...")
 
         while True:
             try:
@@ -484,11 +488,16 @@ class MeshNode:
                 if peer_id == self.id:
                     continue
 
+                is_new = peer_id not in self.known_beacons
                 self.known_beacons[peer_id] = time.time()
                 self.save_persistent_peer(peer_addr)
 
+                if is_new:
+                    self.log(f"🔔 Discovered new UDP beacon from node '{peer_id}' ({peer_addr}) from IP {addr[0]}")
+
                 # Auto-connect if we don't already have a live connection
                 if peer_id not in self.connections and peer_addr not in self.dialing:
+                    self.log(f"Auto-initiating connection to discovered peer {peer_addr}")
                     asyncio.create_task(self.dial(peer_addr))
 
             except Exception:
@@ -502,8 +511,10 @@ class MeshNode:
             for pid in offline:
                 self.known_beacons.pop(pid, None)
                 if pid in self.connections:
+                    self.log(f"⏰ Peer {pid} beacon timed out (offline)")
                     await self.unregister_peer(pid)
             await asyncio.sleep(5)
+
 
 
 # ───────────────────────── REST API ─────────────────────────
