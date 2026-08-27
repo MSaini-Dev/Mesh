@@ -1,75 +1,14 @@
-unning... (auto-discovery & persistent auto-reconnect active)
-
-[MeshOS] Shutting down
 PS C:\Users\Cyntexa\Desktop\shared_server_localhost\server_pract\Server_pract> python server.py --port 8765 --advertise-host 10.193.100.239
-[MeshOS] Loaded 0 persistent peers from known_peers.json
+[MeshOS] Loaded 1 persistent peers from known_peers.json
 ============================================================
-  MeshOS Node ID     : 0dcf8475c0b7
+  MeshOS Node ID     : 33f12573d107
   WebSocket          : ws://10.193.100.239:8765
   REST API           : http://10.193.100.239:8766
   Discovery (UDP)    : port 3848
-  Detected IPs       : 10.193.100.239, 172.24.80.1, 172.25.144.1
+  Detected IPs       : 10.193.100.239, 172.25.144.1, 172.24.80.1
 ============================================================
 [MeshOS] Running... (auto-discovery & persistent auto-reconnect active)
-
-
-
-
-
-C:\Users\Cyntexa\Desktop\shared_server_localhost\server_pract>ipconfig
-
-Windows IP Configuration
-
-
-Ethernet adapter Ethernet:
-
-   Media State . . . . . . . . . . . : Media disconnected
-   Connection-specific DNS Suffix  . :
-
-Ethernet adapter vEthernet (Default Switch):
-
-   Connection-specific DNS Suffix  . :
-   Link-local IPv6 Address . . . . . : fe80::bc74:56cc:ec99:c037%34
-   IPv4 Address. . . . . . . . . . . : 172.25.144.1
-   Subnet Mask . . . . . . . . . . . : 255.255.240.0
-   Default Gateway . . . . . . . . . :
-
-Ethernet adapter vEthernet (WSL (Hyper-V firewall)):
-
-   Connection-specific DNS Suffix  . :
-   Link-local IPv6 Address . . . . . : fe80::5391:1ce9:7ac7:ae33%51
-   IPv4 Address. . . . . . . . . . . : 172.24.80.1
-   Subnet Mask . . . . . . . . . . . : 255.255.240.0
-   Default Gateway . . . . . . . . . :
-
-Wireless LAN adapter Local Area Connection* 1:
-
-   Media State . . . . . . . . . . . : Media disconnected
-   Connection-specific DNS Suffix  . :
-
-Wireless LAN adapter Local Area Connection* 2:
-
-   Media State . . . . . . . . . . . : Media disconnected
-   Connection-specific DNS Suffix  . :
-
-Wireless LAN adapter Wi-Fi:
-
-   Connection-specific DNS Suffix  . :
-   IPv6 Address. . . . . . . . . . . : 2401:4900:aeb9:e01e:e3b:a321:7c68:96ec
-   Temporary IPv6 Address. . . . . . : 2401:4900:aeb9:e01e:e5a5:e9b6:84ec:fc6f
-   Link-local IPv6 Address . . . . . : fe80::6bf4:ab7:7f1f:b96%7
-   IPv4 Address. . . . . . . . . . . : 10.193.100.239
-   Subnet Mask . . . . . . . . . . . : 255.255.255.0
-   Default Gateway . . . . . . . . . : fe80::40e5:ecff:fea0:3f36%7
-                                       10.193.100.111
-
-
-
-
-
-
-
-
-
-
-                                       python server.py --port 8765 --advertise-host 10.193.100.239
+[MeshOS] Dialing ws://10.193.100.101:8765 ...
+[MeshOS] Dial failed ws://10.193.100.101:8765 (attempt 1, retry in 10s): timed out during opening handshake
+[MeshOS] Dialing ws://10.193.100.101:8765 ...
+[MeshOS] Dial failed ws://10.193.100.101:8765 (attempt 2, retry in 20s): timed out during opening handshake
