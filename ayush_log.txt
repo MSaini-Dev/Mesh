@@ -62,3 +62,14 @@ Wireless LAN adapter Wi-Fi:
    Subnet Mask . . . . . . . . . . . : 255.255.255.0
    Default Gateway . . . . . . . . . : fe80::40e5:ecff:fea0:3f36%7
                                        10.193.100.111
+
+
+
+
+
+
+
+
+
+
+                                       python server.py --port 8765 --advertise-host 10.193.100.239
