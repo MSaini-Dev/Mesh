@@ -1,0 +1,49 @@
+PS D:\Personal\Code\Project\Mesh> python server.py --port 8765 --advertise-host 10.193.100.101
+[MeshOS] Loaded 0 persistent peers from known_peers.json
+============================================================
+  MeshOS Node ID     : 0dcf8475c0b7
+  WebSocket          : ws://10.193.100.101:8765
+  REST API           : http://10.193.100.101:8766
+  Discovery (UDP)    : port 3848
+  Detected IPs       : 10.193.100.101, 172.20.112.1
+============================================================
+[MeshOS] Running... (auto-discovery & persistent auto-reconnect active)
+
+PS D:\Personal\Code\Project\Mesh> ipconfig
+
+Windows IP Configuration
+
+
+Ethernet adapter Ethernet:
+
+   Media State . . . . . . . . . . . : Media disconnected
+   Connection-specific DNS Suffix  . : 
+
+Ethernet adapter vEthernet (Default Switch):
+
+   Connection-specific DNS Suffix  . :      
+   Link-local IPv6 Address . . . . . : fe80::d7d8:dda5:b00d:fb5%34
+   IPv4 Address. . . . . . . . . . . : 172.20.112.1
+   Subnet Mask . . . . . . . . . . . : 255.255.240.0
+   Default Gateway . . . . . . . . . :        
+
+Wireless LAN adapter Local Area Connection* 1:
+
+   Media State . . . . . . . . . . . : Media disconnected
+   Connection-specific DNS Suffix  . :
+
+Wireless LAN adapter Local Area Connection* 10:
+
+   Media State . . . . . . . . . . . : Media disconnected
+   Connection-specific DNS Suffix  . :
+
+Wireless LAN adapter WiFi:
+
+   Connection-specific DNS Suffix  . :
+   IPv6 Address. . . . . . . . . . . : 2401:4900:aeb9:e01e:d1bf:b8bd:84d:dc5e
+   Temporary IPv6 Address. . . . . . : 2401:4900:aeb9:e01e:5d37:aecc:8955:265
+   Link-local IPv6 Address . . . . . : fe80::89df:ae5b:52fb:6196%19
+   IPv4 Address. . . . . . . . . . . : 10.193.100.101
+   Subnet Mask . . . . . . . . . . . : 255.255.255.0
+   Default Gateway . . . . . . . . . : fe80::40e5:ecff:fea0:3f36%19
+                                       10.193.100.111
