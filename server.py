@@ -34,6 +34,7 @@ async def main():
                         help="IP that other nodes should use to reach you")
     parser.add_argument("--connect", action="append", default=[],
                         help="Optional manual seed: ws://ip:port")
+    parser.add_argument("--name", default=None, help="Display name shown to other nodes")
     parser.add_argument("--log-file", default="meshos.log",
                         help="Log file name (default: meshos.log)")
     args = parser.parse_args()
@@ -42,11 +43,15 @@ async def main():
 
     node_id = get_or_create_node_id()
     node = MeshNode(node_id, args.host, args.port, args.advertise_host)
+    if args.name:
+        node.set_name(args.name)
     net = NetworkManager(node)
 
     all_ips = get_local_ips()
     print("=" * 60)
     print(f"  MeshOS Node ID     : {node.id}")
+    print(f"  Display name       : {node.name}")
+    print(f"  Open UI            : http://{node.advertise_ip}:{args.port + 1}/")
     print(f"  WebSocket          : {node.self_addr}")
     print(f"  REST API           : http://{node.advertise_ip}:{args.port + 1}")
     print(f"  Discovery (UDP)    : port {UDP_PORT}")

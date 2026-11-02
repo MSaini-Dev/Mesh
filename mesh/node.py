@@ -7,7 +7,7 @@ from collections import deque
 
 import websockets
 
-from .config import PEERS_FILE, get_local_ips
+from .config import PEERS_FILE, get_local_ips, load_node_name, save_node_name
 from .logger import log
 
 
@@ -15,6 +15,7 @@ class MeshNode:
     def __init__(self, node_id: str, listen_host: str, listen_port: int, advertise_host: str | None):
         self.id = node_id
         self.listen_host = listen_host
+        self.name = load_node_name()
         self.listen_port = listen_port
 
         if advertise_host:
@@ -35,7 +36,7 @@ class MeshNode:
                 "addr": self.self_addr,
                 "neighbors": [],
                 "last_seen": time.time(),
-                "name": socket.gethostname(),
+                "name": self.name,
             }
         }
         self.graph_version = 0
@@ -48,6 +49,7 @@ class MeshNode:
         self.cooldowns: dict[str, float] = {}
 
         self.inbox: list[dict] = []
+        self.sent: list[dict] = []
         self._lock = asyncio.Lock()
         
         self.load_persistent_peers()
@@ -86,6 +88,13 @@ class MeshNode:
         self.graph[self.id]["neighbors"] = list(self.connections.keys())
         self.graph[self.id]["last_seen"] = time.time()
         self.graph[self.id]["addr"] = self.self_addr
+        self.graph[self.id]["name"] = self.name
+
+    def set_name(self, name: str):
+        """Rename this node; gossip carries the new name to everyone."""
+        self.name = name.strip()[:32] or socket.gethostname()
+        save_node_name(self.name)
+        self._touch_self()
 
     def merge_graph(self, other_graph: dict) -> bool:
         changed = False
@@ -126,6 +135,7 @@ class MeshNode:
         return {
             "self_id": self.id,
             "self_addr": self.self_addr,
+            "self_name": self.name,
             "advertise_ip": self.advertise_ip,
             "graph_version": self.graph_version,
             "direct_peers": list(self.connections.keys()),

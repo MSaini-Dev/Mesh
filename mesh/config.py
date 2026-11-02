@@ -4,6 +4,7 @@ import uuid
 
 ID_FILE = ".mesh_node_id"
 PEERS_FILE = "known_peers.json"
+NAME_FILE = ".mesh_node_name"
 UDP_PORT = 3848          # discovery port
 BEACON_INTERVAL = 3.0    # seconds
 PEER_TIMEOUT = 15.0      # seconds without beacon → consider offline
@@ -56,3 +57,21 @@ def get_local_ips() -> list[str]:
 
     sorted_ips = sorted(set(raw_ips), key=ip_priority)
     return sorted_ips or ["127.0.0.1"]
+
+
+def load_node_name() -> str:
+    """Friendly display name shown to other nodes (defaults to hostname)."""
+    try:
+        if os.path.exists(NAME_FILE):
+            with open(NAME_FILE, encoding="utf-8") as f:
+                name = f.read().strip()
+                if name:
+                    return name
+    except Exception:
+        pass
+    return socket.gethostname()
+
+
+def save_node_name(name: str):
+    with open(NAME_FILE, "w", encoding="utf-8") as f:
+        f.write(name)

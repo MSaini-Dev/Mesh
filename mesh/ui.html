@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MeshOS</title>
+<style>
+:root{--bg:#0a0a0a;--panel:#101010;--line:#222;--fg:#f2f2f2;--mut:#8a8a8a;--ok:#34d399;--me:#2563eb;--off:#4a4a4a}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--fg);font:14px/1.4 system-ui,-apple-system,"Segoe UI",sans-serif;display:flex}
+#left{flex:1;position:relative;min-width:0;border-right:1px solid var(--line)}
+#right{width:420px;display:flex;flex-direction:column;background:var(--panel)}
+#bar{position:absolute;top:14px;left:14px;right:14px;display:flex;gap:8px;align-items:center;z-index:2}
+#bar label{color:var(--mut);font-size:12px}
+input{background:#0a0a0a;border:1px solid var(--line);color:var(--fg);border-radius:8px;padding:8px 10px;font:inherit;outline:none}
+input:focus-visible,button:focus-visible,textarea:focus-visible{outline:2px solid var(--me);outline-offset:1px}
+button{background:#1c1c1c;border:1px solid var(--line);color:var(--fg);border-radius:8px;padding:8px 12px;font:inherit;cursor:pointer}
+button:hover{background:#262626}
+#name{width:180px}
+#graph{width:100%;height:100%;display:block}
+.edge{stroke:#3a3a3a;stroke-width:1.5}
+.node{cursor:pointer}
+.node circle{fill:#161616;stroke:var(--ok);stroke-width:2}
+.node.off circle{stroke:var(--off)}
+.node.me circle{fill:#0f2a20}
+.node.sel circle{stroke:var(--me);stroke-width:4}
+.node text{fill:var(--fg);text-anchor:middle;font-size:13px;font-weight:600;pointer-events:none}
+.node .id{fill:var(--mut);font-size:10px;font-weight:400}
+.node .badge circle{fill:var(--me);stroke:none}
+.node .badge text{font-size:11px}
+#empty-g{position:absolute;inset:0;display:none;align-items:center;justify-content:center;color:var(--mut)}
+#head{padding:16px 18px;border-bottom:1px solid var(--line);min-height:68px}
+#head b{display:block;font-size:15px}
+#head span{color:var(--mut);font-size:12px}
+#msgs{flex:1;overflow:auto;padding:16px 18px;display:flex;flex-direction:column;gap:8px}
+.hint{margin:auto;text-align:center;color:var(--mut)}
+.m{max-width:80%;padding:8px 12px;border-radius:14px;background:#1b1b1b;align-self:flex-start;overflow-wrap:anywhere}
+.m.mine{background:var(--me);align-self:flex-end}
+.m small{display:block;opacity:.6;font-size:10px;margin-top:2px}
+#compose{padding:12px 14px 6px;display:flex;gap:8px;align-items:flex-end}
+#text{flex:1;resize:none;max-height:120px;min-height:40px;background:#0a0a0a;border:1px solid var(--line);color:var(--fg);border-radius:12px;padding:10px 12px;font:inherit}
+#foot{text-align:center;color:var(--mut);font-size:11px;padding:0 0 10px}
+@media(max-width:800px){body{flex-direction:column}#left{height:45%;border:0;border-bottom:1px solid var(--line)}#right{width:100%;flex:1;min-height:0}#name{width:120px}}
+</style>
+</head>
+<body>
+<div id="left">
+  <div id="bar">
+    <label for="name">Your node name</label>
+    <input id="name" maxlength="32" placeholder="e.g. Rahul's laptop">
+    <button id="save">Save name</button>
+  </div>
+  <svg id="graph" aria-label="Mesh network graph"></svg>
+  <div id="empty-g">Waiting for other nodes to join…</div>
+</div>
+<div id="right">
+  <div id="head"><b id="h1">No node selected</b><span id="h2">Click a node in the graph to start chatting.</span></div>
+  <div id="msgs"><div class="hint">Select a node to see your conversation.</div></div>
+  <div id="compose">
+    <textarea id="text" rows="1" placeholder="Select a node first…" disabled></textarea>
+    <button id="send" disabled>Send</button>
+  </div>
+  <div id="foot">Enter to send · Shift+Enter for a new line</div>
+</div>
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+let st = null, inbox = [], sent = [], sel = null, read = {}, lastKey = '';
+
+const j = async (u, o) => { const r = await fetch(u, o); return r.json(); };
+const nameOf = id => (st.graph[id] && st.graph[id].name) || id;
+
+function reachable() {
+  const seen = new Set([st.self_id]), q = [st.self_id];
+  while (q.length) {
+    const n = q.shift();
+    for (const nb of (st.graph[n] || {}).neighbors || [])
+      if (!seen.has(nb) && st.graph[nb]) { seen.add(nb); q.push(nb); }
+  }
+  return seen;
+}
+
+function drawGraph() {
+  const svg = $('graph'), W = svg.clientWidth, H = svg.clientHeight;
+  const ids = Object.keys(st.graph).sort(), on = reachable();
+  $('empty-g').style.display = ids.length < 2 ? 'flex' : 'none';
+  const cx = W / 2, cy = H / 2 + 20, R = Math.max(40, Math.min(W, H) / 2 - 90);
+  const pos = {};
+  const others = ids.filter(i => i !== st.self_id);
+  pos[st.self_id] = [cx, others.length ? cy : cy - 20];
+  others.forEach((id, i) => {
+    const a = (2 * Math.PI * i) / others.length - Math.PI / 2;
+    pos[id] = [cx + R * Math.cos(a), cy + R * Math.sin(a)];
+  });
+  const drawn = new Set(); let out = '';
+  for (const id of ids) for (const nb of st.graph[id].neighbors || []) {
+    const k = [id, nb].sort().join('|');
+    if (drawn.has(k) || !pos[nb]) continue;
+    drawn.add(k);
+    out += `<line class="edge" x1="${pos[id][0]}" y1="${pos[id][1]}" x2="${pos[nb][0]}" y2="${pos[nb][1]}"/>`;
+  }
+  for (const id of ids) {
+    const [x, y] = pos[id], me = id === st.self_id;
+    const unread = inbox.filter(m => m.from === id).length - (read[id] || 0);
+    const cls = ['node', me ? 'me' : '', on.has(id) ? '' : 'off', id === sel ? 'sel' : ''].join(' ');
+    out += `<g class="${cls}" data-id="${esc(id)}" transform="translate(${x},${y})"><title>${esc(id)}</title>
+      <circle r="34"/><text y="-2">${esc(nameOf(id).slice(0, 10))}</text><text class="id" y="12">${me ? 'you' : esc(id.slice(0, 6))}</text>
+      <text y="54" style="font-weight:400">${esc(nameOf(id))}</text>`;
+    if (!me && unread > 0 && id !== sel) out += `<g class="badge"><circle cx="26" cy="-26" r="10"/><text x="26" y="-22">${unread}</text></g>`;
+    out += '</g>';
+  }
+  svg.innerHTML = out;
+}
+
+function drawChat() {
+  if (!sel || !st.graph[sel]) { return; }
+  const on = reachable().has(sel);
+  $('h1').textContent = nameOf(sel);
+  $('h2').textContent = (on ? 'Online' : 'Offline – not reachable') + ' · ' + sel;
+  const can = on && sel !== st.self_id;
+  $('text').disabled = $('send').disabled = !can;
+  $('text').placeholder = can ? `Message ${nameOf(sel)}…` : 'This node is not reachable right now';
+  const list = [
+    ...inbox.filter(m => m.from === sel).map(m => ({...m, mine: false})),
+    ...sent.filter(m => m.to === sel).map(m => ({...m, mine: true}))
+  ].sort((a, b) => a.ts - b.ts);
+  const key = sel + ':' + list.length;
+  if (key === lastKey) return;
+  lastKey = key;
+  const box = $('msgs');
+  box.innerHTML = list.length ? list.map(m =>
+    `<div class="m ${m.mine ? 'mine' : ''}">${esc(m.msg)}<small>${new Date(m.ts * 1000).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'})}</small></div>`).join('')
+    : '<div class="hint">No messages yet. Say hello.</div>';
+  box.scrollTop = box.scrollHeight;
+}
+
+async function poll() {
+  try {
+    [st, inbox, sent] = await Promise.all([j('/status'), j('/inbox'), j('/sent')]);
+    if (sel) read[sel] = inbox.filter(m => m.from === sel).length;
+    if (document.activeElement !== $('name')) $('name').value = st.self_name;
+    drawGraph(); drawChat();
+  } catch (e) { $('h2').textContent = 'Cannot reach this node’s API. Is the server running?'; }
+}
+
+$('graph').addEventListener('click', e => {
+  const g = e.target.closest('.node'); if (!g) return;
+  sel = g.dataset.id; lastKey = ''; $('text').focus(); poll();
+});
+
+$('save').onclick = async () => {
+  const name = $('name').value.trim(); if (!name) return;
+  await j('/name', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({name})});
+  poll();
+};
+$('name').addEventListener('keydown', e => { if (e.key === 'Enter') $('save').click(); });
+
+async function send() {
+  const msg = $('text').value.trim(); if (!msg || !sel) return;
+  $('text').value = '';
+  const r = await j('/send', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({dest: sel, msg})});
+  if (r.error) { $('h2').textContent = 'Not sent: ' + r.error; $('text').value = msg; }
+  poll();
+}
+$('send').onclick = send;
+$('text').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } });
+
+window.addEventListener('resize', () => st && drawGraph());
+poll(); setInterval(poll, 1500);
+</script>
+</body>
+</html>

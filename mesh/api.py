@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 import time
 from aiohttp import web
 
@@ -48,6 +49,7 @@ def make_app(node: MeshNode, net: NetworkManager):
 
         if dest == node.id:
             node.inbox.append({"from": node.id, "msg": msg, "ts": time.time(), "path": [node.id]})
+            node.sent.append({"to": dest, "msg": msg, "ts": time.time()})
             return web.json_response({"status": "delivered_locally"})
 
         next_hop = node.bfs_next_hop(dest)
@@ -56,9 +58,25 @@ def make_app(node: MeshNode, net: NetworkManager):
 
         try:
             await node.connections[next_hop].send(json.dumps(envelope))
+            node.sent.append({"to": dest, "msg": msg, "ts": time.time()})
             return web.json_response({"status": "sent", "next_hop": next_hop, "dest": dest})
         except Exception as e:
             return web.json_response({"error": str(e)}, status=500)
+
+    async def index(request):
+        return web.FileResponse(os.path.join(os.path.dirname(__file__), "ui.html"))
+
+    async def set_name(request):
+        data = await request.json()
+        name = (data.get("name") or "").strip()
+        if not name:
+            return web.json_response({"error": "Missing 'name'"}, status=400)
+        node.set_name(name)
+        await net.broadcast_graph()
+        return web.json_response({"status": "ok", "name": node.name})
+
+    async def get_sent(request):
+        return web.json_response(node.sent)
 
     async def get_inbox(request):
         return web.json_response(node.inbox)
@@ -67,6 +85,9 @@ def make_app(node: MeshNode, net: NetworkManager):
         res = await net.refresh_connections()
         return web.json_response(res)
 
+    app.router.add_get("/", index)
+    app.router.add_post("/name", set_name)
+    app.router.add_get("/sent", get_sent)
     app.router.add_get("/status", connection_info)
     app.router.add_get("/connection_info", connection_info)
     app.router.add_get("/peers", peers)
